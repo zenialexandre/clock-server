@@ -1,13 +1,16 @@
 package src;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.Objects;
 
 public class NodeTimeAdjustRequest implements Runnable {
@@ -15,10 +18,10 @@ public class NodeTimeAdjustRequest implements Runnable {
     private final Utils utils = new Utils();
     private final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(1);
     private final Map<Integer, LocalTime> nodesActualTimeMap = new HashMap<>();
-    private final List<Integer> nodesTimeDifferences = new ArrayList<>();
+    private final Map<Integer, Integer> nodesTimeDifferences = new HashMap<>();
 
     public void start() {
-        scheduledExecutorService.scheduleAtFixedRate(this, 40, 40, TimeUnit.SECONDS);
+        scheduledExecutorService.scheduleAtFixedRate(this, 100, 100, TimeUnit.SECONDS);
     }
 
     public void run() {
@@ -36,7 +39,8 @@ public class NodeTimeAdjustRequest implements Runnable {
         System.out.println("Coordinator " + Main.coordinatorNodeId
                 + " is sending a current time request for the nodes.");
         getNodesActualTime();
-        getTimeDifferences();
+        getNodesTimeDifferences();
+        setNodesCorrectTime();
         System.out.println("#######################\n");
     }
 
@@ -48,11 +52,53 @@ public class NodeTimeAdjustRequest implements Runnable {
         });
     }
 
-    private void getTimeDifferences() {
-        for (Map.Entry<Integer, LocalTime> element : nodesActualTimeMap.entrySet()) {
+    private void getNodesTimeDifferences() {
+        System.out.println("Collecting time differences from nodes...\n");
+        for (final Map.Entry<Integer, LocalTime> element : nodesActualTimeMap.entrySet()) {
             if (!Objects.deepEquals(element.getKey(), Main.coordinatorNodeId)) {
-                nodesTimeDifferences.add(0 - element.getValue().getMinute());
+                nodesTimeDifferences.put(element.getKey(),
+                        Integer.parseInt(String.valueOf(Objects.requireNonNull(getCoordinatorNode()).getActualTime()
+                                .until(element.getValue(), ChronoUnit.MINUTES))) * -1);
+                System.out.println("Node " + element.getKey() + " has difference: "
+                        + nodesTimeDifferences.get(element.getKey()) + "\n");
             }
+        }
+    }
+
+    private Node getCoordinatorNode() {
+        return Main.nodesList.stream().filter(node ->
+                Objects.deepEquals(node.getId(), Main.coordinatorNodeId)).findAny().orElse(null);
+    }
+
+    private Integer getDifferencesAverage() {
+        System.out.println("Collecting differences average...\n");
+        final List<Integer> differencesToSum = new ArrayList<>();
+
+        for (final Map.Entry<Integer, Integer> element : nodesTimeDifferences.entrySet()) {
+            differencesToSum.add(element.getValue());
+        }
+        final int differencesSum = differencesToSum.stream().mapToInt(Integer::intValue).sum();
+        final Integer differencesAverage = Math.abs(differencesSum / Main.nodesList.size());
+        System.out.println("Differences average: " + differencesAverage + "\n");
+        return differencesAverage;
+    }
+
+    private void setNodesCorrectTime() {
+        System.out.println("Adjusting time between nodes...\n");
+        final Integer differencesAverage = getDifferencesAverage();
+
+        Main.nodesList.forEach(node -> {
+            node.setActualTime(getActualCorrectTime(node, differencesAverage));
+            System.out.println("Node " + node.getId() + " adjusted with time: " + node.getActualTime() + "\n");
+        });
+    }
+
+    private LocalTime getActualCorrectTime(@NotNull final Node node, @NotNull final Integer differencesAverage) {
+        if (Objects.deepEquals(node.getId(), Main.coordinatorNodeId)) {
+            return node.getActualTime().plusMinutes(differencesAverage);
+        } else {
+            final Integer nodeTimeDifference = nodesTimeDifferences.get(node.getId());
+            return node.getActualTime().plusMinutes(nodeTimeDifference + differencesAverage);
         }
     }
 

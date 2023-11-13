@@ -20,7 +20,7 @@ public class Node {
         return id;
     }
 
-    private void setActualTime(final LocalTime actualTime) {
+    protected void setActualTime(final LocalTime actualTime) {
         this.actualTime = actualTime;
     }
 
